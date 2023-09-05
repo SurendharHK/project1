@@ -12,6 +12,8 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
+var increment=0
+
 type TransactionService struct {
 	client                *mongo.Client
 	CustomerCollection    *mongo.Collection
@@ -29,38 +31,38 @@ func NewTransactionServiceInit(client *mongo.Client, Customercollection *mongo.C
 
 }
 
+
 func (a *TransactionService) CreatePayment(cardno float64, cvvverified int, amount float64) (string, error) {
 
-	session, err := a.client.StartSession()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer session.EndSession(context.Background())
+	increment++
 
-	filter := bson.M{"cardno": cardno}
+    session, err := a.client.StartSession()
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer session.EndSession(context.Background())
 
-	var account *models.Paymentscard
+    filter := bson.M{"Cardno": cardno}
 
-	err1 := a.CustomerCollection.FindOne(context.Background(), filter).Decode(&account)
-	if err1 != nil {
-		return "error", err1
-	}
-	fmt.Println("going to in")
+    var account *models.Paymentscard
 
-	if account.Balance > amount {
-		fmt.Println("its in")
+    err1 := a.CustomerCollection.FindOne(context.Background(), filter).Decode(&account)
+    if err1 != nil {
+        return "error", err1
+    }
 
-		_, err = session.WithTransaction(context.Background(), func(ctx mongo.SessionContext) (interface{}, error) {
-			_, err := a.CustomerCollection.UpdateOne(context.Background(),
-				bson.M{"cardno": cardno},
-				bson.M{"$inc": bson.M{"balance": -amount}})
-			if err != nil {
-				fmt.Println("Transaction Failed")
-				return nil, err
-			}
+    if account.Balance >= amount {
+        _, err := session.WithTransaction(context.Background(), func(ctx mongo.SessionContext) (interface{}, error) {
+            _, err := a.CustomerCollection.UpdateOne(context.Background(),
+                bson.M{"Cardno": cardno},
+                bson.M{"$inc": bson.M{"balance": -amount}})
+            if err != nil {
+                fmt.Println("Transaction Failed")
+                return nil, err
+            }
 
-			transactionToInsert := models.Payments{
-				Id:          "T011",
+            transactionToInsert := models.Payments{
+                Id:          string(rune(increment)),
 				Customer_id: "",
 				Status:      "success",
 				Gateway:     "",
@@ -68,23 +70,27 @@ func (a *TransactionService) CreatePayment(cardno float64, cvvverified int, amou
 				Amount:      amount,
 				Card:        models.Paymentscard{},
 				Token:       "",
-			}
-			res, _ := a.TransactionCollection.InsertOne(context.Background(), &transactionToInsert)
-			var newUser *models.Payments
-			query := bson.M{"_id": res.InsertedID}
-			fmt.Println(res.InsertedID)
+            }
 
-			err3 := a.TransactionCollection.FindOne(a.ctx, query).Decode(&newUser)
-			if err3 != nil {
-				return nil, err3
-			}
-			return "success", nil
-		})
-		if err != nil {
-			return "failed", err
-		}
-	} else {
-		return "Insufficent balance", nil
-	}
-	return "success", nil
+            res, err := a.TransactionCollection.InsertOne(context.Background(), &transactionToInsert)
+            if err != nil {
+                return nil, err
+            }
+
+            var newUser *models.Payments
+            query := bson.M{"_id": res.InsertedID}
+            err3 := a.TransactionCollection.FindOne(context.Background(), query).Decode(&newUser)
+            if err3 != nil {
+                return nil, err3
+            }
+            return newUser, nil
+        })
+
+        if err != nil {
+            return "failed", err
+        }
+    } else {
+        return "Insufficient balance", nil
+    }
+    return "success", nil
 }
